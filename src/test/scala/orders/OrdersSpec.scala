@@ -1,10 +1,14 @@
 package orders
 
-import cats.Id
-import cats.data.{EitherT, StateT}
+import cats.Functor
+import cats.data.EitherT
+import cats.data.StateT
 import cats.effect.IO
+import cats.mtl.MonadState
 import cats.mtl.instances.all._
-import orders.Orders.{OrderCompletionFailure, OrderNotInProgress}
+import cats.syntax.all._
+import orders.Orders.OrderCompletionFailure
+import orders.Orders.OrderNotInProgress
 import orders.domain.Order
 import orders.domain.Order.Status.Complete
 import orders.domain.Order.Status.InProgress
@@ -16,12 +20,12 @@ class OrdersSpec extends WordSpec with Matchers {
 
   type TestEffect[A] = EitherT[StateT[IO, Map[Order.Id, Order], ?], OrderCompletionFailure, A]
 
-  implicit val repository: OrderRepository[TestEffect] = new OrderRepository[TestEffect] {
-    override def find(id: Order.Id): TestEffect[Option[Order]] =
-      EitherT.liftF(StateT.inspect(_.get(id)))
+  implicit def repository[F[_]: Functor](implicit S: MonadState[F, Map[Order.Id, Order]]): OrderRepository[F] = new OrderRepository[F] {
+    override def find(id: Order.Id): F[Option[Order]] =
+      S.get.map(_.get(id))
 
-    override def save(order: Order): TestEffect[Unit] =
-      EitherT.liftF(StateT.modify(_ + (order.id -> order)))
+    override def save(order: Order): F[Unit] =
+      S.modify(_ + (order.id -> order))
   }
 
   val orders = Orders.instance[TestEffect]
