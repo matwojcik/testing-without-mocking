@@ -1,21 +1,31 @@
 package orders
 
 import cats.Monad
+import cats.data.OptionT
+import cats.mtl.FunctorRaise
 import cats.syntax.all._
 import orders.domain.Order
 
 trait Orders[F[_]] {
-  def completeIfPossible(id: Order.Id): F[Option[Order]]
+  def completeOrder(id: Order.Id): F[Order]
 }
 
 object Orders {
 
-  def instance[F[_]: OrderRepository: Monad]: Orders[F] = new Orders[F] {
-    override def completeIfPossible(id: Order.Id): F[Option[Order]] =
+  sealed trait OrderCompletionFailure extends Product with Serializable
+  case class NotExistingOrder(id: Order.Id) extends OrderCompletionFailure
+  case class OrderNotInProgress(id: Order.Id) extends OrderCompletionFailure
+
+  def instance[F[_]: OrderRepository: Monad: FunctorRaise[?[_], OrderCompletionFailure]]: Orders[F] = new Orders[F] {
+    override def completeOrder(id: Order.Id): F[Order] =
       for {
-        order <- OrderRepository[F].find(id)
-        completeOrder = order.filter(_.status == Order.Status.InProgress).map(_.copy(status = Order.Status.Complete))
-        _ <- completeOrder.map(OrderRepository[F].save).getOrElse(Monad[F].unit)
-      } yield completeOrder.orElse(order)
+        order <- FunctorRaise[F, OrderCompletionFailure].ensure(findOrder(id))(OrderNotInProgress(id))(_.status == Order.Status.InProgress)
+        completeOrder = order.copy(status = Order.Status.Complete)
+        _ <- OrderRepository[F].save(completeOrder)
+      } yield completeOrder
+
+
+  private def findOrder(id: Order.Id) =
+    OptionT(OrderRepository[F].find(id)).getOrElseF(FunctorRaise[F, OrderCompletionFailure].raise(NotExistingOrder(id)))
   }
 }

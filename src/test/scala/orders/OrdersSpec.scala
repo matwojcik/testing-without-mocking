@@ -1,7 +1,10 @@
 package orders
 
 import cats.Id
-import cats.data.StateT
+import cats.data.{EitherT, StateT}
+import cats.effect.IO
+import cats.mtl.instances.all._
+import orders.Orders.{OrderCompletionFailure, OrderNotInProgress}
 import orders.domain.Order
 import orders.domain.Order.Status.Complete
 import orders.domain.Order.Status.InProgress
@@ -11,14 +14,14 @@ import org.scalatest.WordSpec
 
 class OrdersSpec extends WordSpec with Matchers {
 
-  type TestEffect[A] = StateT[Id, Map[Order.Id, Order], A]
+  type TestEffect[A] = EitherT[StateT[IO, Map[Order.Id, Order], ?], OrderCompletionFailure, A]
 
   implicit val repository: OrderRepository[TestEffect] = new OrderRepository[TestEffect] {
     override def find(id: Order.Id): TestEffect[Option[Order]] =
-      StateT.inspect(_.get(id))
+      EitherT.liftF(StateT.inspect(_.get(id)))
 
     override def save(order: Order): TestEffect[Unit] =
-      StateT.modify(_ + (order.id -> order))
+      EitherT.liftF(StateT.modify(_ + (order.id -> order)))
   }
 
   val orders = Orders.instance[TestEffect]
@@ -33,9 +36,9 @@ class OrdersSpec extends WordSpec with Matchers {
       "not complete the order" in {
         val initialState = Map(OrderId -> OrderInInitialStatus)
 
-        val (state, result) = orders.completeIfPossible(OrderId).run(initialState)
+        val (state, result) = orders.completeOrder(OrderId).value.run(initialState).unsafeRunSync()
         state shouldEqual initialState
-        result should contain(OrderInInitialStatus)
+        result should be(Left(OrderNotInProgress(OrderId)))
       }
     }
 
@@ -43,9 +46,9 @@ class OrdersSpec extends WordSpec with Matchers {
       "complete order" in {
         val initialState = Map(OrderId -> OrderInProgressStatus)
 
-        val (state, result) = orders.completeIfPossible(OrderId).run(initialState)
+        val (state, result) = orders.completeOrder(OrderId).value.run(initialState).unsafeRunSync()
         state shouldEqual Map(OrderId -> OrderInCompleteStatus)
-        result should contain(OrderInCompleteStatus)
+        result should be(Right(OrderInCompleteStatus))
       }
     }
   }
