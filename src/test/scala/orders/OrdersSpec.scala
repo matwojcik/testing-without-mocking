@@ -6,7 +6,7 @@ import cats.data.StateT
 import cats.effect.IO
 import cats.mtl.MonadState
 import cats.mtl.instances.all._
-import cats.syntax.all._
+import com.olegpy.meow.hierarchy._
 import orders.Orders.OrderCompletionFailure
 import orders.Orders.OrderNotFullyPicked
 import orders.Orders.OrderNotInProgress
@@ -22,18 +22,8 @@ class OrdersSpec extends WordSpec with Matchers {
   case class TestState(orders: Map[Order.Id, Order], picks: Map[Order.Id, List[Pick]])
   type TestEffect[A] = EitherT[StateT[IO, TestState, ?], OrderCompletionFailure, A]
 
-  implicit def orderRepository[F[_]: Functor](implicit S: MonadState[F, TestState]): OrderRepository[F] = new OrderRepository[F] {
-    override def find(id: Order.Id): F[Option[Order]] =
-      S.get.map(_.orders.get(id))
-
-    override def save(order: Order): F[Unit] =
-      S.modify(s => s.copy(orders = s.orders + (order.id -> order)))
-  }
-
-  implicit def pickRepository[F[_]: Functor](implicit S: MonadState[F, TestState]): PickRepository[F] = new PickRepository[F] {
-    override def findPicksOfOrder(id: Order.Id): F[List[domain.Pick]] =
-      S.get.map(_.picks.getOrElse(id, List.empty))
-  }
+  implicit def orderRepository[F[_]: Functor: MonadState[?[_], TestState]]: OrderRepository[F] = FakeOrderRepository.instance[F]
+  implicit def pickRepository[F[_]: Functor: MonadState[?[_], TestState]]: PickRepository[F] = FakePickRepository.instance[F]
 
   val orders = Orders.instance[TestEffect]
 
